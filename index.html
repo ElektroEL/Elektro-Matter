@@ -253,9 +253,49 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            animation: fadeIn 0.3s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
         .file-item span {
             color: #9bff00;
+            flex: 1;
+            word-break: break-all;
+            padding-right: 10px;
+        }
+        .file-remove {
+            color: #ff4444;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1.2rem;
+            padding: 0 5px;
+            transition: color 0.3s;
+        }
+        .file-remove:hover {
+            color: #ff7777;
+        }
+        .file-info {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            min-width: 80px;
+        }
+        .file-size {
+            color: #aaa;
+            font-size: 0.8rem;
+        }
+        .file-limit-warning {
+            margin-top: 10px;
+            padding: 8px 12px;
+            background: rgba(255, 193, 7, 0.1);
+            border: 1px solid #ffc107;
+            border-radius: 6px;
+            color: #ffc107;
+            font-size: 0.9rem;
+            display: none;
         }
         .btn-submit {
             width: 100%;
@@ -334,6 +374,8 @@
             .form-content { padding: 25px; }
             .cta-buttons { flex-direction: column; }
             .btn { width: 100%; justify-content: center; }
+            .file-item { flex-direction: column; align-items: flex-start; }
+            .file-info { flex-direction: row; justify-content: space-between; width: 100%; margin-top: 5px; }
         }
     </style>
 </head>
@@ -397,16 +439,22 @@
                 </div>
 
                 <div class="form-group">
-                    <label><i class="fas fa-file-upload"></i> 3D-файл (если есть)</label>
+                    <label><i class="fas fa-file-upload"></i> 3D-файлы (если есть)</label>
                     <div class="file-upload">
-                        <input type="file" id="modelFile" accept=".stl,.obj,.3mf,.step">
+                        <input type="file" id="modelFile" accept=".stl,.obj,.3mf,.step,.zip,.rar" multiple>
                         <div class="file-upload-icon">
                             <i class="fas fa-cloud-upload-alt"></i>
                         </div>
-                        <p>Перетащите файл или нажмите для загрузки</p>
-                        <p><small>Поддерживаемые форматы: STL, OBJ, 3MF, STEP</small></p>
+                        <p>Перетащите файлы или нажмите для загрузки</p>
+                        <p><small>Поддерживаемые форматы: STL, OBJ, 3MF, STEP, ZIP, RAR (до 50 МБ каждый, максимум 5 файлов)</small></p>
                     </div>
                     <div id="fileList" class="file-list"></div>
+                    <div id="fileCounter" class="file-counter" style="margin-top: 10px; color: #9bff00; display: none;">
+                        <i class="fas fa-file-alt"></i> Выбрано файлов: <span id="fileCount">0</span>/5
+                    </div>
+                    <div id="fileLimitWarning" class="file-limit-warning">
+                        <i class="fas fa-exclamation-triangle"></i> Достигнут лимит в 5 файлов. Удалите файлы чтобы добавить новые.
+                    </div>
                 </div>
 
                 <div class="form-group">
@@ -451,27 +499,160 @@
         const TELEGRAM_CHAT_ID = '5247798280';
         // ===============================================
 
+        // Константы
+        const MAX_FILES = 5;
+        const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 МБ
+
         // Элементы формы
         const form = document.getElementById('orderForm');
         const fileInput = document.getElementById('modelFile');
         const fileList = document.getElementById('fileList');
+        const fileCounter = document.getElementById('fileCounter');
+        const fileCount = document.getElementById('fileCount');
+        const fileLimitWarning = document.getElementById('fileLimitWarning');
         const submitBtn = document.getElementById('submitBtn');
         const alertSuccess = document.getElementById('alertSuccess');
         const alertError = document.getElementById('alertError');
 
-        // Отслеживаем выбранный файл
+        // Массив для хранения файлов
+        let filesArray = [];
+
+        // Функция форматирования размера файла
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Б';
+            const k = 1024;
+            const sizes = ['Б', 'КБ', 'МБ', 'ГБ'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // Функция проверки лимита файлов
+        function checkFileLimit() {
+            if (filesArray.length >= MAX_FILES) {
+                fileLimitWarning.style.display = 'block';
+                fileInput.disabled = true;
+                return false;
+            } else {
+                fileLimitWarning.style.display = 'none';
+                fileInput.disabled = false;
+                return true;
+            }
+        }
+
+        // Обработка выбора файлов
         fileInput.addEventListener('change', function(e) {
+            const newFiles = Array.from(e.target.files);
+            
+            // Проверяем общее количество файлов
+            if (filesArray.length + newFiles.length > MAX_FILES) {
+                alert(`Максимальное количество файлов: ${MAX_FILES}. У вас уже выбрано ${filesArray.length} файлов.`);
+                this.value = ''; // Сбрасываем input
+                return;
+            }
+            
+            // Проверка размера файлов
+            for (const file of newFiles) {
+                if (file.size > MAX_FILE_SIZE) {
+                    alert(`Файл "${file.name}" превышает максимальный размер 50 МБ`);
+                    this.value = '';
+                    return;
+                }
+            }
+            
+            // Добавляем новые файлы в массив
+            filesArray = [...filesArray, ...newFiles];
+            updateFileList();
+        });
+
+        // Функция обновления списка файлов
+        function updateFileList() {
             fileList.innerHTML = '';
-            const files = Array.from(e.target.files);
-            files.forEach(file => {
+            
+            filesArray.forEach((file, index) => {
                 const fileItem = document.createElement('div');
                 fileItem.className = 'file-item';
                 fileItem.innerHTML = `
                     <span><i class="fas fa-file"></i> ${file.name}</span>
-                    <small>(${(file.size / 1024 / 1024).toFixed(2)} MB)</small>
+                    <div class="file-info">
+                        <div class="file-size">${formatFileSize(file.size)}</div>
+                        <button type="button" class="file-remove" data-index="${index}" title="Удалить файл">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
                 `;
                 fileList.appendChild(fileItem);
             });
+
+            // Обновляем счетчик
+            fileCount.textContent = filesArray.length;
+            if (filesArray.length > 0) {
+                fileCounter.style.display = 'block';
+            } else {
+                fileCounter.style.display = 'none';
+            }
+
+            // Проверяем лимит
+            checkFileLimit();
+
+            // Добавляем обработчики для кнопок удаления
+            document.querySelectorAll('.file-remove').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const index = parseInt(this.getAttribute('data-index'));
+                    filesArray.splice(index, 1);
+                    updateFileList();
+                    fileInput.value = ''; // Сбрасываем input для возможности выбора тех же файлов
+                });
+            });
+        }
+
+        // Drag and drop функционал
+        const fileUploadArea = document.querySelector('.file-upload');
+        
+        fileUploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            fileUploadArea.style.borderColor = '#9bff00';
+            fileUploadArea.style.background = 'rgba(155, 255, 0, 0.05)';
+        });
+
+        fileUploadArea.addEventListener('dragleave', () => {
+            fileUploadArea.style.borderColor = '#444';
+            fileUploadArea.style.background = 'transparent';
+        });
+
+        fileUploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            fileUploadArea.style.borderColor = '#444';
+            fileUploadArea.style.background = 'transparent';
+            
+            const droppedFiles = Array.from(e.dataTransfer.files);
+            
+            // Проверяем лимит
+            if (filesArray.length + droppedFiles.length > MAX_FILES) {
+                alert(`Максимальное количество файлов: ${MAX_FILES}. У вас уже выбрано ${filesArray.length} файлов.`);
+                return;
+            }
+            
+            // Фильтруем только поддерживаемые файлы
+            const allowedExtensions = ['.stl', '.obj', '.3mf', '.step', '.zip', '.rar'];
+            const validFiles = droppedFiles.filter(file => {
+                const ext = '.' + file.name.split('.').pop().toLowerCase();
+                return allowedExtensions.includes(ext);
+            });
+            
+            // Проверка размера
+            for (const file of validFiles) {
+                if (file.size > MAX_FILE_SIZE) {
+                    alert(`Файл "${file.name}" превышает максимальный размер 50 МБ`);
+                    return;
+                }
+            }
+            
+            if (validFiles.length > 0) {
+                filesArray = [...filesArray, ...validFiles];
+                updateFileList();
+            } else {
+                alert('Пожалуйста, загружайте только файлы с расширениями: .stl, .obj, .3mf, .step, .zip, .rar');
+            }
         });
 
         // Отправка формы
@@ -482,29 +663,27 @@
             submitBtn.disabled = true;
             submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Отправка...';
 
-            // Собираем данные
-            const formData = new FormData();
-            formData.append('projectName', document.getElementById('projectName').value);
-            formData.append('projectDescription', document.getElementById('projectDescription').value);
-            formData.append('userName', document.getElementById('userName').value);
-            formData.append('userContact', document.getElementById('userContact').value);
-
-            // Если есть файл
-            if (fileInput.files[0]) {
-                formData.append('file', fileInput.files[0]);
-            }
-
             // Формируем текст сообщения для Telegram
             let messageText = `🆕 *НОВЫЙ ЗАКАЗ 3D-печати*\\n`;
-            messageText += `\\n*Проект:* ${formData.get('projectName')}`;
-            messageText += `\\n*Описание:* ${formData.get('projectDescription')}`;
-            messageText += `\\n*Клиент:* ${formData.get('userName')}`;
-            messageText += `\\n*Контакты:* ${formData.get('userContact')}`;
+            messageText += `\\n*Проект:* ${document.getElementById('projectName').value}`;
+            messageText += `\\n*Описание:* ${document.getElementById('projectDescription').value}`;
+            messageText += `\\n*Клиент:* ${document.getElementById('userName').value}`;
+            messageText += `\\n*Контакты:* ${document.getElementById('userContact').value}`;
+            messageText += `\\n*Файлов:* ${filesArray.length} из ${MAX_FILES}`;
+            
+            // Добавляем список файлов
+            if (filesArray.length > 0) {
+                messageText += `\\n\\n*Список файлов:*`;
+                filesArray.forEach((file, index) => {
+                    messageText += `\\n${index + 1}. ${file.name} (${formatFileSize(file.size)})`;
+                });
+            }
+            
             messageText += `\\n\\n_Дата: ${new Date().toLocaleString('ru-RU')}_`;
 
             try {
                 // 1. Отправляем текстовое сообщение в Telegram
-                const textResponse = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+                await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -514,24 +693,31 @@
                     })
                 });
 
-                // 2. Если есть файл — отправляем файл
-                if (fileInput.files[0]) {
-                    const fileFormData = new FormData();
-                    fileFormData.append('chat_id', TELEGRAM_CHAT_ID);
-                    fileFormData.append('document', fileInput.files[0]);
-                    fileFormData.append('caption', `Файл к заказу: ${formData.get('projectName')}`);
-
-                    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`, {
-                        method: 'POST',
-                        body: fileFormData
-                    });
+                // 2. Отправляем файлы (если есть)
+                if (filesArray.length > 0) {
+                    // Отправляем каждый файл отдельным сообщением
+                    for (const file of filesArray) {
+                        const fileFormData = new FormData();
+                        fileFormData.append('chat_id', TELEGRAM_CHAT_ID);
+                        fileFormData.append('document', file);
+                        fileFormData.append('caption', `Файл: ${file.name} (${formatFileSize(file.size)})`);
+                        
+                        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`, {
+                            method: 'POST',
+                            body: fileFormData
+                        });
+                        
+                        // Небольшая задержка между отправками
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    }
                 }
 
                 // Успех
                 alertSuccess.style.display = 'block';
                 alertError.style.display = 'none';
                 form.reset();
-                fileList.innerHTML = '';
+                filesArray = [];
+                updateFileList();
                 
                 // Прокрутка к уведомлению
                 alertSuccess.scrollIntoView({ behavior: 'smooth' });
@@ -564,6 +750,9 @@
                 }
             });
         });
+
+        // Инициализация
+        checkFileLimit();
     </script>
 </body>
 </html>
